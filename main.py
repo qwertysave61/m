@@ -1,13 +1,6 @@
 import telebot
 import psycopg2
 
-username = "thzrixmbpxycue"
-password = "7184838441baf33aa0986afeca61e726ab610163a77c357087e3e826fc71fc5c"
-host = "ec2-54-210-128-153.compute-1.amazonaws.com"
-database = "d7tofl99vg7pq2"
-port = 5432
-
-
 bot = telebot.TeleBot("5571503607:AAHvem3lFbtFpSG7AV6OEKslPDROhA64wpw")
 
 
