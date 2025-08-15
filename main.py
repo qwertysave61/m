@@ -1,101 +1,73 @@
-import telebot
-import psycopg2
+import asyncio
+import logging
+import os
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.redis import RedisStorage
+from config import settings
+from database import create_tables, close_database
+from handlers import user_handlers, admin_handlers, payment_handlers, bot_management
+from loguru import logger
+import redis.asyncio as redis
+import sys
 
-bot = telebot.TeleBot("5571503607:AAHvem3lFbtFpSG7AV6OEKslPDROhA64wpw")
+# Setup logging
+logger.remove()
+logger.add(
+    sys.stdout,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    level="INFO"
+)
+logger.add(
+    f"{settings.LOG_PATH}/main.log",
+    rotation="1 day",
+    retention="30 days",
+    level="DEBUG"
+)
 
+async def main():
+    """Main bot function"""
+    # Create directories if they don't exist
+    os.makedirs(settings.BOT_STORAGE_PATH, exist_ok=True)
+    os.makedirs(settings.UPLOAD_PATH, exist_ok=True)
+    os.makedirs(settings.LOG_PATH, exist_ok=True)
+    
+    # Create database tables
+    await create_tables()
+    
+    # Initialize bot and dispatcher
+    bot = Bot(token=settings.BOT_TOKEN, parse_mode="HTML")
+    
+    # Setup Redis storage for FSM
+    redis_client = redis.from_url(settings.REDIS_URL)
+    storage = RedisStorage(redis_client)
+    dp = Dispatcher(storage=storage)
+    
+    # Register handlers
+    dp.include_router(user_handlers.router)
+    dp.include_router(admin_handlers.router)
+    dp.include_router(payment_handlers.router)
+    dp.include_router(bot_management.router)
+    
+    logger.info("Bot Factory Platform started successfully!")
+    
+    try:
+        # Start polling
+        await dp.start_polling(bot)
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    finally:
+        await bot.session.close()
+        await close_database()
+        await redis_client.close()
+        logger.info("Bot Factory Platform stopped")
 
-# Filter for words
-def words_filter(msg, words):
-    if not msg.text:
-        return False
-    for word in words:
-        if word in msg.text:
-            return True
-    return False
-
-
-@bot.message_handler(commands=['start'])
-def welcome(message):
-    if message.chat.type == 'private':
-        chat_id = str(message.from_user.id)
-        bot.send_message(message.from_user.id, "Assalomu alaykum." + chat_id ,parse_mode='html')
-
-
-@bot.message_handler(commands=['dellall'])
-def delete_all(message):
-    connection = psycopg2.connect(host=host, database=database, user=username, password=password, port=port)
-    with connection.cursor() as cursor:
-        cursor.execute("TRUNCATE grs")
-    connection.close()
-
-
-@bot.message_handler(commands=['getall'])
-def getall(message):
-    get_data(message)
-
-
-@bot.message_handler(content_types=['text'])
-def lalala(message):
-    if message.chat.type == 'supergroup':
-        if '/set' in message.text:
-            channel = message.text.replace('/set ', '').split()[0]
-            is_admin = bot.get_chat_member(chat_id=str(channel), user_id=message.from_user.id).can_delete_messages
-            if is_admin:
-                new_channel(message, channel)
-            else:
-                bot.send_message(message.chat.id, "Botni kanalga admin qilmadingiz.")
-        else:
-            pass
-
-
-def check(message):
-    connection = psycopg2.connect(host=host, database=database, user=username, password=password, port=port)
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT kanal FROM grs WHERE grid = %s", message.chat.id)
-    result = cursor.fetchone()
-    connection.close()
-    if result is None:
-        return False
-    return True
-
-
-def get_data(message):
-    chat_id = message.chat.id
-    msg = ""
-    connection = psycopg2.connect(host=host, database=database, user=username, password=password, port=port)
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT kanal FROM grs WHERE grid = %s", chat_id)
-        result = cursor.fetchall()
-
-    for x in result:
-        msg += "{}\n".format(x)
-    if msg is None:
-        bot.send_message(message.chat.id, "Hech narsa yoq")
-    else:
-        bot.send_message(message.chat.id, msg)
-    connection.close()
-
-
-def new_channel(message, chan):
-    connection = psycopg2.connect(host=host, database=database, user=username, password=password, port=port)
-    channel = str(chan)
-    with connection.cursor() as cursor:
-        sql_select_query = "SELECT kanal FROM grs WHERE grid = %s"
-        cursor.execute(sql_select_query, message.chat.id)
-        record = cursor.fetchone()
-    msg = str(record)
-    if channel not in record:
-        sql_update_query = "INSERT INTO grs(grid, userid, kanal) VALUES (%s, %s, %s)"
-        with connection.cursor() as cursor:
-            cursor.execute(sql_update_query, (message.chat.id, message.from_user.id, channel))
-        bot.send_message(message.chat.id, "Guruhingiz kanalingizga ulandi." + msg)
-        connection.close()
-    else:
-        sql_update_query = "Update grs SET kanal = %s where grid = %s"
-        with connection.cursor() as cursor:
-            cursor.execute(sql_update_query, (channel, message.chat.id))
-        bot.send_message(message.chat.id, "Guruhingiz kanalingizga qayta ulandi." + msg)
-        connection.close()
-
-
-bot.polling(none_stop=True)
+if __name__ == "__main__":
+    if not settings.BOT_TOKEN:
+        logger.error("BOT_TOKEN environment variable is not set!")
+        sys.exit(1)
+    
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        sys.exit(1)
